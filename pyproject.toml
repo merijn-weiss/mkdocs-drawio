@@ -4,7 +4,8 @@ version = "1.8.2"
 description = "MkDocs plugin for embedding Drawio files"
 authors = [
     "Jan Larwig <jan@larwig.com>",
-    "Sergey Lukin <onixpro@gmail.com>"
+    "Sergey Lukin <onixpro@gmail.com>",
+    "Yves Chevallier <yves.chevallier@heig-vd.ch>"
 ]
 license = "MIT"
 readme = "README.md"
@@ -16,6 +17,11 @@ keywords = [
 packages = [
     { include = "mkdocs_drawio/plugin.py" },
 ]
+
+[tool.poetry.urls]
+"Documentation" = "https://github.com/tuunit/mkdocs-drawio/"
+"Source" = "https://github.com/tuunit/mkdocs-drawio/"
+"Tracker" = "https://github.com/tuunit/mkdocs-drawio/issues"
 
 [tool.poetry.dependencies]
 python = ">=3.8.0,<4.0"
@@ -31,8 +37,11 @@ mkdocs-print-site-plugin = "^2.6.0"
 mkdocs-material = "^9.5.50"
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"
+
+[tool.poetry-dynamic-versioning]
+enable = true
 
 [tool.poetry.plugins."mkdocs.plugins"]
 drawio = 'mkdocs_drawio.plugin:DrawioPlugin'
