@@ -1,11 +1,12 @@
 [tool.poetry]
 name = "mkdocs-drawio"
-version = "1.8.2"
+version = "1.8.2+mondriancustom"
 description = "MkDocs plugin for embedding Drawio files"
 authors = [
     "Jan Larwig <jan@larwig.com>",
     "Sergey Lukin <onixpro@gmail.com>",
-    "Yves Chevallier <yves.chevallier@heig-vd.ch>"
+    "Yves Chevallier <yves.chevallier@heig-vd.ch>",
+    "Merijn Weiss <merijn.weiss@gmail.com>"
 ]
 license = "MIT"
 readme = "README.md"
@@ -15,7 +16,13 @@ keywords = [
     "mkdocs", "plugin", "markdown", "drawio"
 ]
 packages = [
-    { include = "mkdocs_drawio/plugin.py" },
+    { include = "mkdocs_drawio" },
+]
+
+include = [
+  { path = "mkdocs_drawio/css", format = "sdist" },
+  { path = "mkdocs_drawio/js", format = "sdist" },
+  { path = "mkdocs_drawio/fonts", format = "sdist" },
 ]
 
 [tool.poetry.urls]
