@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mkdocs-drawio"
-version = "1.9.0+mondriancustom"
+version = "0.0.0"  # ignored when using dynamic versioning
 description = "MkDocs plugin for embedding Drawio files"
 authors = [
     "Jan Larwig <jan@larwig.com>",
@@ -49,6 +49,11 @@ build-backend = "poetry_dynamic_versioning.backend"
 
 [tool.poetry-dynamic-versioning]
 enable = true
+vcs = "git"
+style = "pep440"
+strip-prefix = "v"
+metadata = true
+tag-pattern = '^v?(?P<version>\d+\.\d+\.\d+(?:\+[a-zA-Z0-9.-]+)?)$'
 
 [tool.poetry.plugins."mkdocs.plugins"]
 drawio = 'mkdocs_drawio.plugin:DrawioPlugin'
