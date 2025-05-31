@@ -496,14 +496,29 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
         return None
 
     def build_editor_url(self, diagram: Tag, src: str, page_id: str, page=None) -> str:
-        def determine_hash_prefix(repo_prefix: str) -> str:
-            """Return the correct hash prefix based on the repo host."""
-            parsed = urlparse(f"https://{repo_prefix}")
-            hostname = parsed.hostname or repo_prefix.lower()
+        def determine_hash_prefix(edit_url: str) -> str:
+            """Return the correct hash prefix based on the Git provider host."""
+            try:
+                parsed = urlparse(edit_url)
+                hostname = (parsed.hostname or "").lower()
 
-            if "github.com" in hostname or "github.io" in hostname:
-                return "H"
-            return "A"  # Default to GitLab-style
+                LOGGER.debug(f"[determine_hash_prefix] Parsed hostname: {hostname}")
+
+                if "github.com" in hostname or "github.io" in hostname:
+                    LOGGER.debug(f"[determine_hash_prefix] Detected GitHub, returning 'H'")
+                    return "H"
+
+                if "gitlab.com" in hostname:
+                    LOGGER.debug(f"[determine_hash_prefix] Detected GitLab, returning 'A'")
+                    return "A"
+
+                LOGGER.debug(f"[determine_hash_prefix] Unknown provider, defaulting to 'A'")
+                return "A"
+
+            except Exception as e:
+                LOGGER.warning(f"⚠️ [determine_hash_prefix] Exception while determining prefix: {e}")
+                return "A"
+
 
         base_url = diagram.attrs.get("data-editor-url", self.config.editor_base_url)
         if not base_url or not page_id:
@@ -544,8 +559,8 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             encoded_src = f"{parent}/{filename}"
 
             encoded_json = quote(json.dumps({"pageId": page_id}))
-            hash_prefix = determine_hash_prefix(repo_prefix)
-            viewer_url = f"{base_url}#{hash_prefix}{encoded_src}#{encoded_json}"
+            hash_prefix = determine_hash_prefix(edit_url)
+            viewer_url = f"{base_url}/#{hash_prefix}{encoded_src}#{encoded_json}"
 
             LOGGER.debug(f"[build_editor_url] Constructed viewer_url: {viewer_url}")
             return viewer_url
