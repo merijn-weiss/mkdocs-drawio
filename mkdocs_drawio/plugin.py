@@ -512,12 +512,18 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
                     LOGGER.debug(f"[determine_hash_prefix] Detected GitLab, returning 'A'")
                     return "A"
 
-                LOGGER.debug(f"[determine_hash_prefix] Unknown provider, defaulting to 'A'")
+                # Add known unsupported GitHub Enterprise domains
+                if hostname.endswith("kyndryl.net"):
+                    LOGGER.warning(f"[determine_hash_prefix] ⚠️ Unsupported GitHub Enterprise instance '{hostname}' — disabling edit link")
+                    return None
+
+                LOGGER.warning(f"[determine_hash_prefix] Unknown provider, defaulting to 'A'")
                 return "A"
 
             except Exception as e:
                 LOGGER.warning(f"⚠️ [determine_hash_prefix] Exception while determining prefix: {e}")
                 return "A"
+
 
 
         base_url = diagram.attrs.get("data-editor-url", self.config.editor_base_url)
@@ -560,7 +566,11 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
 
             encoded_json = quote(json.dumps({"pageId": page_id}))
             hash_prefix = determine_hash_prefix(edit_url)
-            viewer_url = f"{base_url}/#{hash_prefix}{encoded_src}#{encoded_json}"
+            if not hash_prefix:
+                LOGGER.warning(f"⚠️ Skipping viewer_url — unsupported host: {edit_url}")
+                return ""
+
+            viewer_url = f"{base_url}#{hash_prefix}{encoded_src}#{encoded_json}"
 
             LOGGER.debug(f"[build_editor_url] Constructed viewer_url: {viewer_url}")
             return viewer_url
