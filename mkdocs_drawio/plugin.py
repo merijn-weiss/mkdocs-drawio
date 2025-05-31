@@ -529,7 +529,12 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             src_clean = Path(src).as_posix().lstrip("/")
             full_src = f"{repo_prefix}/{edit_path.rsplit('/', 1)[0]}/{src_clean}".lstrip("/")
 
-            encoded_src = quote(full_src, safe='')
+            # Only encode the actual file name, not the whole path
+            src_path = Path(full_src)
+            parent = src_path.parent.as_posix()
+            filename = quote(unquote(src_path.name), safe="")
+            encoded_src = f"{parent}/{filename}"
+
             encoded_json = quote(json.dumps({"pageId": page_id}))
             viewer_url = f"{base_url}#A{encoded_src}#{encoded_json}"
 
