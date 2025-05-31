@@ -4,7 +4,7 @@ import re
 import json
 import string
 import logging
-from urllib.parse import unquote
+from urllib.parse import unquote, quote, urlparse
 from lxml import etree
 from typing import Dict
 from html import escape
@@ -22,50 +22,25 @@ SUB_TEMPLATE = string.Template(
 
 LOGGER = logging.getLogger("mkdocs.plugins.diagrams")
 
-
 class Toolbar(base.Config):
     """Configuration options for the toolbar, mostly taken from
     https://www.drawio.com/doc/faq/embed-html-options
     """
-
     pages = c.Type(bool, default=True)
-    """ Display the page selector in the toolbar """
-
     zoom = c.Type(bool, default=True)
-    """ Display the zoom control in the toolbar """
-
     layers = c.Type(bool, default=True)
-    """ Display the layers control in the toolbar """
-
     lightbox = c.Type(bool, default=True)
-    """ Display the open in lightbox control in the toolbar """
-
     position = c.Choice(["top", "bottom"], default="top")
-    """ Position of the toolbar """
-
     no_hide = c.Type(bool, default=False)
-    """ Whether to hide the toolbar when the mouse is not over it """
-
 
 class DrawioConfig(base.Config):
-    """Configuration options for the Drawio Plugin"""
-
     toolbar = c.SubConfig(Toolbar)
-    """ Whether to show the toolbar with controls """
-
     tooltips = c.Type(bool, default=True)
-    """ Whether to show tooltips """
-
     border = c.Optional(c.Type(int))
     padding = c.Type(int, default=10)
-    """ Padding around the diagram, border will be deprecated
-    but kept for backwards compatibility """
-
     edit = c.Type((bool, str), default=False)
-    """ Whether to allow editing the diagram or use a custom editor URL """
-
+    editor_base_url = c.Optional(c.Type(str, default=None))
     background = c.Type(str, default="transparent")
-
     include_src = c.Type(bool, default=True)
     include_page = c.Type(bool, default=True)
     caption_prefix = c.Type(str, default="Figure: ")
@@ -74,9 +49,7 @@ class DrawioConfig(base.Config):
     def _post_validate(self):
         if self.border is not None:
             self.padding = self.border
-
         return super()._post_validate()
-
 
 class DrawioPlugin(BasePlugin[DrawioConfig]):
     """
@@ -95,9 +68,6 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
         config.extra_javascript.extend(self.js)
 
     def on_post_build(self, config: base.Config):
-        from mkdocs.utils import copy_file
-        from pathlib import Path
-
         base = Path(__file__).parent
         css_files = ["css/drawio.css"]
         js_files = ["js/drawio.js", "js/viewer-static.min.js"]
@@ -135,7 +105,7 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             print(f"📦 Copying font: {font_file.name}")
             copy_file(font_file, fonts_dst / font_file.name)
 
-    def get_diagram_config(self, diagram: Tag) -> Dict:
+    def get_diagram_config(self, diagram: Tag, page, src: str = "", page_names=None, diagram_xml=None) -> Dict:
         """Get the configuration for the diagram. Apply either default values in the plugin
         or values passed in the diagram tag from `attr_list` markdown extension."""
 
@@ -166,8 +136,6 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             def __call__(self, enabled):
                 return self.text if enabled else ""
 
-        # To add more options described in https://www.drawio.com/doc/faq/embed-html-options
-        # Add a new tuple to the list with the following format:
         T = namedtuple("EmbedOption", ["attr", "name", "default", "coerce"])
         embed_options = [
             T("data-page", "page", None, to_int_or_str),
@@ -176,7 +144,7 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             T(
                 "data-edit",
                 "edit",
-                self.config.edit,
+                None,
                 lambda x: (
                     "_blank" if x is True else (
                         f"{x}&client=1" if isinstance(x, str) and "?" in x else f"{x}?client=1"
@@ -193,25 +161,10 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             ),
             T("data-title", "title", None, no_action),
             T("data-nohide", "toolbar-nohide", self.config.toolbar.no_hide, to_bool),
-            T(
-                "data-toolbar-pages",
-                "toolbar",
-                self.config.toolbar.pages,
-                to_str("pages"),
-            ),
+            T("data-toolbar-pages", "toolbar", self.config.toolbar.pages, to_str("pages")),
             T("data-toolbar-zoom", "toolbar", self.config.toolbar.zoom, to_str("zoom")),
-            T(
-                "data-toolbar-layers",
-                "toolbar",
-                self.config.toolbar.layers,
-                to_str("layers"),
-            ),
-            T(
-                "data-toolbar-lightbox",
-                "toolbar",
-                self.config.toolbar.lightbox,
-                to_str("lightbox"),
-            ),
+            T("data-toolbar-layers", "toolbar", self.config.toolbar.layers, to_str("layers")),
+            T("data-toolbar-lightbox", "toolbar", self.config.toolbar.lightbox, to_str("lightbox")),
         ]
 
         # Get the data-attributes from the diagram tag
@@ -232,7 +185,7 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
         conf["toolbar"] = conf["toolbar"].strip()
         if conf["toolbar"] == "":
             del conf["toolbar"]
-                
+
         # Set the fonts for the Mondrian Diagram viewer
         conf["defaultFonts"] = [
             {
@@ -271,6 +224,43 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
         result = self._process_drawio_page(output_content, config, page)
 
         return result
+    
+    def build_caption(self, diagram: Tag, page_names: list[str], editor_href: str | None) -> Tag | None:
+        caption_text = diagram.attrs.get("data-caption")
+        include_src = diagram.attrs.get("data-caption-src", self.config.include_src)
+        include_page = diagram.attrs.get("data-caption-page", self.config.include_page)
+        include_prefix = diagram.attrs.get("data-caption-prefix", self.config.caption_prefix)
+        caption_prefix = "" if not include_prefix else diagram.attrs.get("data-caption-prefix", self.config.caption_prefix)
+        caption_page_separator = diagram.attrs.get("data-caption-page-separator", self.config.caption_page_separator)
+
+        full_caption = None
+        if caption_text:
+            full_caption = f"{caption_prefix}{caption_text}" if caption_prefix else caption_text
+        else:
+            parts = []
+            if include_src:
+                src_clean = unquote(diagram["src"])
+                src_label = include_src if isinstance(include_src, str) else Path(src_clean).stem
+                parts.append(src_label)
+            if include_page:
+                page_label = include_page if isinstance(include_page, str) else ", ".join(page_names)
+                if page_label:
+                    parts.append(page_label)
+            if parts:
+                full_caption = f"{caption_prefix}{caption_page_separator.join(parts)}"
+
+        if full_caption:
+            caption_html = markdown(full_caption)
+            caption_soup = BeautifulSoup(caption_html, "lxml")
+            para = caption_soup.find("p")
+            if para and editor_href:
+                icon_html = f'''<a class="md-icon drawio-caption-icon" href="{editor_href}" title="Edit this diagram" target="_blank"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg></a>'''
+                para.append(BeautifulSoup(icon_html, "lxml").a)
+            if para:
+                caption_wrapper = caption_soup.new_tag("div", **{"class": "md-caption drawio-caption"})
+                caption_wrapper.append(para)
+                return caption_wrapper
+        return None
 
     def _process_drawio_page(self, output_content, config, page):
         if ".drawio" not in output_content.lower():
@@ -278,95 +268,52 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
 
         path = Path(page.file.abs_dest_path).parent
         soup = BeautifulSoup(output_content, "lxml")
-
         diagrams = soup.find_all("img", src=self.RE_DRAWIO_FILE)
-        LOGGER.debug(f"🔍 Found {len(diagrams)} diagrams in {page.file.src_path}")
 
-        for idx, diagram in enumerate(diagrams):
-            diagram_config = self.get_diagram_config(diagram)
-
-            if re.search("^https?://", diagram["src"]):
-                mxgraph = BeautifulSoup(
-                    self.substitute_with_url(diagram_config, diagram["src"]),
-                    "lxml",
-                )
+        for diagram in diagrams:
+            requested_pages = diagram.attrs.get("data-pages")
+            if requested_pages:
+                requested_pages = [p.strip() for p in requested_pages.split(",")]
+            elif diagram.get("alt"):
+                requested_pages = [diagram.get("alt").strip()]
             else:
-                # Resolve pages
-                pages_attr = diagram.attrs.get("data-pages")
-                if pages_attr:
-                    requested_pages = [p.strip() for p in pages_attr.split(",")]
-                elif diagram.get("alt"):  # ← use alt as a fallback
-                    requested_pages = [diagram.get("alt").strip()]
-                else:
-                    requested_pages = None  # ← render all pages
+                requested_pages = None
 
-                html_str, page_names = self.substitute_with_file(diagram_config, path, diagram["src"], requested_pages, page.file.src_path)
+            config_data = {}
+            html_str, page_names = self.substitute_with_file(
+                config_data, path, diagram["src"], requested_pages, page.file.src_path
+            )
 
-                mxgraph = BeautifulSoup(html_str, "lxml")
+            diagram_config = self.get_diagram_config(diagram, page, diagram["src"], page_names)
+            diagram_xml = etree.fromstring(config_data["xml"]) if "xml" in config_data else None
+            editor_href = self.inject_edit_link(diagram_config, diagram, diagram_xml, page_names, page)
+            diagram_config.update(config_data)
 
+            html_str = SUB_TEMPLATE.substitute(
+                background=diagram_config.get("viewerBackground", "transparent"),
+                config=escape(json.dumps(diagram_config))
+            )
+
+            mxgraph = BeautifulSoup(html_str, "lxml")
             container = soup.new_tag("div", **{"class": "drawio-container"})
-            for elem in mxgraph:
-                container.append(elem)
+            container.extend(mxgraph)
 
-            caption_text = diagram.attrs.get("data-caption")
-            caption_wrapper = None
-
-            def resolve_flag(val, fallback):
-                if val is None:
-                    return fallback
-                if isinstance(val, str):
-                    if val.lower() in ("false", "0", "none"):
-                        return False
-                    if val.lower() in ("true", "1", "yes"):
-                        return True
-                    return val
-                return val
-
-            include_src = resolve_flag(diagram.attrs.get("data-caption-src"), self.config.include_src)
-            include_page = resolve_flag(diagram.attrs.get("data-caption-page"), self.config.include_page)
-            include_prefix = resolve_flag(diagram.attrs.get("data-caption-prefix"), self.config.caption_prefix)
-            caption_prefix = "" if not include_prefix else diagram.attrs.get("data-caption-prefix", self.config.caption_prefix)
-            caption_page_separator = diagram.attrs.get("data-caption-page-separator", self.config.caption_page_separator)
-
-            if caption_text is not None:
-                full_caption = f"{caption_prefix}{caption_text}" if caption_prefix else caption_text
-            else:
-                parts = []
-                if include_src:
-                    src_clean = unquote(diagram["src"])
-                    src_label = include_src if isinstance(include_src, str) else Path(src_clean).stem
-                    parts.append(src_label)
-                if include_page:
-                    page_label = include_page if isinstance(include_page, str) else ", ".join(page_names)
-                    if page_label:
-                        parts.append(page_label)
-                full_caption = f"{caption_prefix}{caption_page_separator.join(parts)}" if parts else None
-
-            if full_caption:
-                caption_html = markdown(full_caption)
-                caption_soup = BeautifulSoup(caption_html, "lxml")
-                caption_wrapper = soup.new_tag("div", **{"class": "md-caption drawio-caption"})
-                for node in caption_soup:
-                    caption_wrapper.append(node)
+            caption_wrapper = self.build_caption(diagram, page_names, editor_href)
 
             wrapper = diagram
             while wrapper and wrapper.name not in ("body", "[document]"):
                 if "glightbox" in wrapper.get("class", []):
                     break
                 wrapper = wrapper.parent
-
             if not wrapper or wrapper.name in ("body", "[document]"):
                 wrapper = diagram
 
-            wrapper.replace_with(container)
             if caption_wrapper:
-                container.insert_after(caption_wrapper)
+                wrapper.insert_after(caption_wrapper)
+
+            wrapper.replace_with(container)
 
         return str(soup)
-
-    def substitute_with_url(self, config: Dict, url: str) -> str:
-        config["url"] = url
-        return SUB_TEMPLATE.substitute(background=config.get("viewerBackground", "transparent"),config=escape(json.dumps(config)))
 
     def substitute_with_file(
         self,
@@ -460,8 +407,15 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             # Fallback to index
             if selected is None and page.isdigit():
                 index = int(page)
+                LOGGER.debug(f"🔢 Attempting index-based diagram selection: index={index}, total={len(diagrams)}")
+                for i, d in enumerate(diagrams):
+                    name = d.get("name")
+                    LOGGER.debug(f"    🧾 Diagram {i}: name='{name}'")
                 if 0 <= index < len(diagrams):
                     selected = diagrams[index]
+                    LOGGER.debug(f"✅ Selected diagram at index {index}: name='{selected.get('name')}'")
+                else:
+                    LOGGER.warning(f"⚠️ Index '{index}' is out of bounds for diagram file '{src}'")
 
             if selected is not None:
                 try:
@@ -490,45 +444,12 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
         if page_names:
             config["title"] = page_names[0]
 
+        LOGGER.debug(f"[drawio] final viewer config: {json.dumps(config, indent=2)}")
+
         return SUB_TEMPLATE.substitute(
             background=config.get("viewerBackground", "transparent"),
             config=escape(json.dumps(config))
         ), page_names
-
-
-    def parse_diagram(self, data, page_name, src="", path=None) -> tuple[str, str]:
-        if page_name is None or len(page_name) == 0:
-            return etree.tostring(data, encoding=str), None
-
-        try:
-            mxfile = data.xpath("//mxfile")[0]
-            diagrams = mxfile.xpath("//diagram")
-
-            selected = None
-
-            # Try to match by name
-            named_matches = [d for d in diagrams if d.get("name") == page_name]
-            if named_matches:
-                selected = named_matches[0]
-            # Fallback to index
-            elif page_name.isdigit():
-                index = int(page_name)
-                if 0 <= index < len(diagrams):
-                    selected = diagrams[index]
-
-            if selected is not None:
-                actual_name = selected.get("name", None)
-                parser = etree.XMLParser()
-                result = parser.makeelement(mxfile.tag, mxfile.attrib)
-                result.append(selected)
-                return etree.tostring(result, encoding=str), actual_name
-
-            LOGGER.warning(f"No diagram found for name or index '{page_name}' in '{src}' at '{path}'")
-            return etree.tostring(mxfile, encoding=str), None
-
-        except Exception as e:
-            LOGGER.warning(f"Could not parse page '{page_name}' for diagram '{src}' on path '{path}' — {e}")
-            return "", None
 
     def _styled_error_html(self, message: str) -> str:
         return f'''
@@ -543,3 +464,78 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             <span style="font-size: 1.2em; margin-right: 0.3em;">❌</span>{message}
         </div>
         '''
+
+    def inject_edit_link(self, diagram_config, diagram, diagram_xml, page_names, page):
+        config_edit = self.config.edit
+        diagram_edit = diagram.attrs.get("data-edit", "").lower()
+        if config_edit is False or diagram_edit == "false":
+            return None
+
+        if diagram_xml is None or not page_names or page is None:
+            return None
+
+        try:
+            page_id = None
+            for d in diagram_xml.xpath("//diagram"):
+                if d.get("name") == page_names[0]:
+                    page_id = d.get("id")
+                    break
+
+            if not page_id:
+                return None
+
+            editor_href = self.build_editor_url(diagram, diagram["src"], page_id, page)
+            if editor_href:
+                diagram_config["edit"] = f"{editor_href}?client=1"
+                toolbar_value = diagram_config.get("toolbar", "")
+                if isinstance(toolbar_value, str) and "edit" not in toolbar_value:
+                    diagram_config["toolbar"] = f"{toolbar_value.strip()} edit".strip()
+                return editor_href
+        except Exception as e:
+            LOGGER.warning(f"⚠️ Failed to build edit URL — {e}")
+        return None
+
+
+    def build_editor_url(self, diagram: Tag, src: str, page_id: str, page=None) -> str:
+        base_url = diagram.attrs.get("data-editor-url", self.config.editor_base_url)
+        if not base_url or not page_id:
+            LOGGER.warning(f"⚠️ Cannot build editor URL — missing base_url or page_id (base_url={base_url}, page_id={page_id})")
+            return ""
+
+        if not page or not getattr(page, "edit_url", None):
+            page_file = getattr(page, "file", None)
+            if not page_file or not getattr(page_file, "name", "").startswith("print_page"):
+                LOGGER.warning(f"⚠️ Cannot build editor URL for diagram '{src}' — page.edit_url not available")
+            return ""
+
+        try:
+            edit_url = page.edit_url
+            LOGGER.debug(f"[build_editor_url] Using edit_url: {edit_url}")
+
+            parsed = urlparse(edit_url)
+            path_parts = parsed.path.strip("/").split("/")
+
+            if "edit" not in path_parts:
+                LOGGER.warning(f"⚠️ Could not find 'edit' in path: {parsed.path}")
+                return ""
+
+            edit_index = path_parts.index("edit")
+            repo_prefix = "/".join(path_parts[:edit_index])
+            edit_path = "/".join(path_parts[edit_index + 1:])
+
+            if not repo_prefix or not edit_path:
+                raise ValueError("Missing repo_prefix or edit_path")
+
+            src_clean = Path(src).as_posix().lstrip("/")
+            full_src = f"{repo_prefix}/{edit_path.rsplit('/', 1)[0]}/{src_clean}".lstrip("/")
+
+            encoded_src = quote(full_src, safe='')
+            encoded_json = quote(json.dumps({"pageId": page_id}))
+            viewer_url = f"{base_url}#A{encoded_src}#{encoded_json}"
+
+            LOGGER.debug(f"[build_editor_url] Constructed viewer_url: {viewer_url}")
+            return viewer_url
+
+        except Exception as e:
+            LOGGER.warning(f"⚠️ Failed to build editor URL for diagram '{src}' — {e}")
+            return ""
