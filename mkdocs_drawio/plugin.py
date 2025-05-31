@@ -496,13 +496,14 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
         return None
 
     def build_editor_url(self, diagram: Tag, src: str, page_id: str, page=None) -> str:
-        def determine_hash_prefix(base_url: str) -> str:
-            """Return the correct hash prefix based on base_url."""
-            parsed_url = urlparse(base_url)
-            hostname = parsed_url.hostname or ""
+        def determine_hash_prefix(repo_prefix: str) -> str:
+            """Return the correct hash prefix based on the repo host."""
+            parsed = urlparse(f"https://{repo_prefix}")
+            hostname = parsed.hostname or repo_prefix.lower()
+
             if "github.com" in hostname or "github.io" in hostname:
                 return "H"
-            return "A"  # Default to GitLab-style paths
+            return "A"  # Default to GitLab-style
 
         base_url = diagram.attrs.get("data-editor-url", self.config.editor_base_url)
         if not base_url or not page_id:
@@ -543,7 +544,7 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             encoded_src = f"{parent}/{filename}"
 
             encoded_json = quote(json.dumps({"pageId": page_id}))
-            hash_prefix = determine_hash_prefix(base_url)
+            hash_prefix = determine_hash_prefix(repo_prefix)
             viewer_url = f"{base_url}#{hash_prefix}{encoded_src}#{encoded_json}"
 
             LOGGER.debug(f"[build_editor_url] Constructed viewer_url: {viewer_url}")
