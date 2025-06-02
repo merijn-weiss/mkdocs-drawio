@@ -45,6 +45,7 @@ class DrawioConfig(base.Config):
     include_page = c.Type(bool, default=True)
     caption_prefix = c.Type(str, default="Figure: ")
     caption_page_separator = c.Type(str, default=" - ")
+    caption_only_mode = c.Type(str, default="viewer-on-click")
 
     def _post_validate(self):
         if self.border is not None:
@@ -224,96 +225,6 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
         result = self._process_drawio_page(output_content, config, page)
 
         return result
-    
-    def build_caption(self, diagram: Tag, page_names: list[str], editor_href: str | None) -> Tag | None:
-        caption_text = diagram.attrs.get("data-caption")
-        include_src = diagram.attrs.get("data-caption-src", self.config.include_src)
-        include_page = diagram.attrs.get("data-caption-page", self.config.include_page)
-        include_prefix = diagram.attrs.get("data-caption-prefix", self.config.caption_prefix)
-        caption_prefix = "" if not include_prefix else diagram.attrs.get("data-caption-prefix", self.config.caption_prefix)
-        caption_page_separator = diagram.attrs.get("data-caption-page-separator", self.config.caption_page_separator)
-
-        full_caption = None
-        if caption_text:
-            full_caption = f"{caption_prefix}{caption_text}" if caption_prefix else caption_text
-        else:
-            parts = []
-            if include_src:
-                src_clean = unquote(diagram["src"])
-                src_label = include_src if isinstance(include_src, str) else Path(src_clean).stem
-                parts.append(src_label)
-            if include_page:
-                page_label = include_page if isinstance(include_page, str) else ", ".join(page_names)
-                if page_label:
-                    parts.append(page_label)
-            if parts:
-                full_caption = f"{caption_prefix}{caption_page_separator.join(parts)}"
-
-        if full_caption:
-            caption_html = markdown(full_caption)
-            caption_soup = BeautifulSoup(caption_html, "lxml")
-            para = caption_soup.find("p")
-            if para and editor_href:
-                icon_html = f'''<a class="md-icon drawio-caption-icon" href="{editor_href}" title="Edit this diagram" target="_blank"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg></a>'''
-                para.append(BeautifulSoup(icon_html, "lxml").a)
-            if para:
-                caption_wrapper = caption_soup.new_tag("div", **{"class": "md-caption drawio-caption"})
-                caption_wrapper.append(para)
-                return caption_wrapper
-        return None
-
-    def _process_drawio_page(self, output_content, config, page):
-        if ".drawio" not in output_content.lower():
-            return output_content
-
-        path = Path(page.file.abs_dest_path).parent
-        soup = BeautifulSoup(output_content, "lxml")
-        diagrams = soup.find_all("img", src=self.RE_DRAWIO_FILE)
-
-        for diagram in diagrams:
-            requested_pages = diagram.attrs.get("data-pages")
-            if requested_pages:
-                requested_pages = [p.strip() for p in requested_pages.split(",")]
-            elif diagram.get("alt"):
-                requested_pages = [diagram.get("alt").strip()]
-            else:
-                requested_pages = None
-
-            config_data = {}
-            html_str, page_names = self.substitute_with_file(
-                config_data, path, diagram["src"], requested_pages, page.file.src_path
-            )
-
-            diagram_config = self.get_diagram_config(diagram, page, diagram["src"], page_names)
-            diagram_xml = etree.fromstring(config_data["xml"]) if "xml" in config_data else None
-            editor_href = self.inject_edit_link(diagram_config, diagram, diagram_xml, page_names, page)
-            diagram_config.update(config_data)
-
-            html_str = SUB_TEMPLATE.substitute(
-                background=diagram_config.get("viewerBackground", "transparent"),
-                config=escape(json.dumps(diagram_config))
-            )
-
-            mxgraph = BeautifulSoup(html_str, "lxml")
-            container = soup.new_tag("div", **{"class": "drawio-container"})
-            container.extend(mxgraph)
-
-            caption_wrapper = self.build_caption(diagram, page_names, editor_href)
-
-            wrapper = diagram
-            while wrapper and wrapper.name not in ("body", "[document]"):
-                if "glightbox" in wrapper.get("class", []):
-                    break
-                wrapper = wrapper.parent
-            if not wrapper or wrapper.name in ("body", "[document]"):
-                wrapper = diagram
-
-            if caption_wrapper:
-                wrapper.insert_after(caption_wrapper)
-
-            wrapper.replace_with(container)
-
-        return str(soup)
 
     def substitute_with_file(
         self,
@@ -439,7 +350,9 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
                 f"Available: <b>{available_list}</b>"
             ), []
 
-        config["xml"] = etree.tostring(mxfile_el, encoding=str)
+#        config["xml"] = etree.tostring(mxfile_el, encoding=str)
+        config["xml"] = etree.tostring(mxfile_el, encoding="unicode")
+
 
         if page_names:
             config["title"] = page_names[0]
@@ -448,7 +361,8 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
 
         return SUB_TEMPLATE.substitute(
             background=config.get("viewerBackground", "transparent"),
-            config=escape(json.dumps(config))
+            #config=escape(json.dumps(config))
+            config=json.dumps(config)
         ), page_names
 
     def _styled_error_html(self, message: str) -> str:
@@ -465,14 +379,14 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
         </div>
         '''
 
-    def inject_edit_link(self, diagram_config, diagram, diagram_xml, page_names, page):
+    def inject_edit_link(self, diagram_config, diagram, diagram_xml, page_names, page) -> tuple[str | None, str | None]:
         config_edit = self.config.edit
         diagram_edit = diagram.attrs.get("data-edit", "").lower()
         if config_edit is False or diagram_edit == "false":
-            return None
+            return None, None
 
         if diagram_xml is None or not page_names or page is None:
-            return None
+            return None, None
 
         try:
             page_id = None
@@ -482,22 +396,22 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
                     break
 
             if not page_id:
-                return None
+                return None, None
 
-            editor_href = self.build_editor_url(diagram, diagram["src"], page_id, page)
+            viewer_href, editor_href = self.build_editor_url(diagram, diagram["src"], page_id, page)
+
             if editor_href:
                 diagram_config["edit"] = f"{editor_href}?client=1"
                 toolbar_value = diagram_config.get("toolbar", "")
                 if isinstance(toolbar_value, str) and "edit" not in toolbar_value:
                     diagram_config["toolbar"] = f"{toolbar_value.strip()} edit".strip()
-                return editor_href
+                return viewer_href, editor_href
         except Exception as e:
             LOGGER.warning(f"⚠️ Failed to build edit URL — {e}")
-        return None
+        return None, None
 
-    def build_editor_url(self, diagram: Tag, src: str, page_id: str, page=None) -> str:
-        def determine_hash_prefix(edit_url: str) -> str:
-            """Return the correct hash prefix based on the Git provider host."""
+    def build_editor_url(self, diagram: Tag, src: str, page_id: str, page=None) -> tuple[str, str] | tuple[None, None]:
+        def determine_hash_prefix(edit_url: str) -> str | None:
             try:
                 parsed = urlparse(edit_url)
                 hostname = (parsed.hostname or "").lower()
@@ -505,48 +419,45 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
                 LOGGER.debug(f"[determine_hash_prefix] Parsed hostname: {hostname}")
 
                 if "github.com" in hostname or "github.io" in hostname:
-                    LOGGER.debug(f"[determine_hash_prefix] Detected GitHub, returning 'H'")
                     return "H"
-
                 if "gitlab.com" in hostname:
-                    LOGGER.debug(f"[determine_hash_prefix] Detected GitLab, returning 'A'")
                     return "A"
-
-                # Add known unsupported GitHub Enterprise domains
-                if hostname.endswith("kyndryl.net"):
+                if hostname.endswith("github.kyndryl.net"):
                     LOGGER.warning(f"[determine_hash_prefix] ⚠️ Unsupported GitHub Enterprise instance '{hostname}' — disabling edit link")
                     return None
 
                 LOGGER.warning(f"[determine_hash_prefix] Unknown provider, defaulting to 'A'")
                 return "A"
-
             except Exception as e:
                 LOGGER.warning(f"⚠️ [determine_hash_prefix] Exception while determining prefix: {e}")
                 return "A"
 
-
-
         base_url = diagram.attrs.get("data-editor-url", self.config.editor_base_url)
         if not base_url or not page_id:
             LOGGER.warning(f"⚠️ Cannot build editor URL — missing base_url or page_id (base_url={base_url}, page_id={page_id})")
-            return ""
+            return None, None
 
         if not page or not getattr(page, "edit_url", None):
             page_file = getattr(page, "file", None)
             if not page_file or not getattr(page_file, "name", "").startswith("print_page"):
                 LOGGER.warning(f"⚠️ Cannot build editor URL for diagram '{src}' — page.edit_url not available")
-            return ""
+            return None, None
 
         try:
             edit_url = page.edit_url
             LOGGER.debug(f"[build_editor_url] Using edit_url: {edit_url}")
+
+            hash_prefix = determine_hash_prefix(edit_url)
+            if not hash_prefix:
+                LOGGER.warning(f"⚠️ Skipping viewer_url — unsupported host: {edit_url}")
+                return None, None
 
             parsed = urlparse(edit_url)
             path_parts = parsed.path.strip("/").split("/")
 
             if "edit" not in path_parts:
                 LOGGER.warning(f"⚠️ Could not find 'edit' in path: {parsed.path}")
-                return ""
+                return None, None
 
             edit_index = path_parts.index("edit")
             repo_prefix = "/".join(path_parts[:edit_index])
@@ -558,23 +469,170 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             src_clean = Path(src).as_posix().lstrip("/")
             full_src = f"{repo_prefix}/{edit_path.rsplit('/', 1)[0]}/{src_clean}".lstrip("/")
 
-            # Only encode the actual file name, not the whole path
             src_path = Path(full_src)
             parent = src_path.parent.as_posix()
             filename = quote(unquote(src_path.name), safe="")
             encoded_src = f"{parent}/{filename}"
 
             encoded_json = quote(json.dumps({"pageId": page_id}))
-            hash_prefix = determine_hash_prefix(edit_url)
-            if not hash_prefix:
-                LOGGER.warning(f"⚠️ Skipping viewer_url — unsupported host: {edit_url}")
-                return ""
 
             viewer_url = f"{base_url}#{hash_prefix}{encoded_src}#{encoded_json}"
 
-            LOGGER.debug(f"[build_editor_url] Constructed viewer_url: {viewer_url}")
-            return viewer_url
+            # Only GitHub and GitLab return editor_url
+            editor_url = f"{viewer_url}?client=1" if hash_prefix in ("H", "A") else None
+
+            if editor_url is None:
+                LOGGER.debug("[build_editor_url] Viewer URL available, but no editor link due to unsupported host")
+
+            LOGGER.debug(f"[build_editor_url] viewer_url: {viewer_url}")
+            LOGGER.debug(f"[build_editor_url] editor_url: {editor_url}")
+
+            return viewer_url, editor_url
 
         except Exception as e:
             LOGGER.warning(f"⚠️ Failed to build editor URL for diagram '{src}' — {e}")
-            return ""
+            return None, None
+
+
+    def _process_drawio_page(self, output_content, config, page):
+        import uuid
+
+        if ".drawio" not in output_content.lower():
+            return output_content
+
+        path = Path(page.file.abs_dest_path).parent
+        soup = BeautifulSoup(output_content, "lxml")
+        diagrams = soup.find_all("img", src=self.RE_DRAWIO_FILE)
+
+        for diagram in diagrams:
+            requested_pages = diagram.attrs.get("data-pages")
+            if requested_pages:
+                requested_pages = [p.strip() for p in requested_pages.split(",")]
+            elif diagram.get("alt"):
+                requested_pages = [diagram.get("alt").strip()]
+            else:
+                requested_pages = None
+
+            config_data = {}
+            html_str, page_names = self.substitute_with_file(
+                config_data, path, diagram["src"], requested_pages, page.file.src_path
+            )
+
+            # 🧩 Early return if we got an error message instead of valid diagram HTML
+            if "drawio-error" in html_str:
+                LOGGER.warning(f"📛 Substitution failed for diagram '{diagram['src']}', injecting error HTML.")
+                error_soup = BeautifulSoup(html_str, "lxml")
+                diagram.replace_with(error_soup)
+                continue  # skip rest of loop
+
+            diagram_config = self.get_diagram_config(diagram, page, diagram["src"], page_names)
+            diagram_config.update(config_data)
+
+
+            try:
+                diagram_xml = etree.fromstring(config_data["xml"])
+            except Exception as e:
+                LOGGER.warning(f"⚠️ Failed to parse XML from config_data: {e}")
+                continue
+
+            viewer_href, editor_href = self.inject_edit_link(diagram_config, diagram, diagram_xml, page_names, page)
+
+            view = diagram.attrs.get("data-view", "").lower()
+            view_mode = diagram.attrs.get("data-view-mode", "").lower()
+            if not view_mode:
+                view_mode = self.config.caption_only_mode
+            if view_mode not in ("viewer-on-click", "edit-on-click"):
+                LOGGER.warning(f"⚠️ Unknown caption-only mode '{view_mode}', defaulting to 'edit-on-click'")
+                view_mode = "edit-on-click"
+
+            html_str = SUB_TEMPLATE.substitute(
+                background=diagram_config.get("viewerBackground", "transparent"),
+                config=escape(json.dumps(diagram_config))
+            )
+            mxgraph = BeautifulSoup(html_str, "lxml")
+            mxgraph_div = mxgraph.find("div", class_="mxgraph")
+
+            container = soup.new_tag("div", **{"class": "drawio-container"})
+
+            if view == "caption-only":
+                unique_id = f"drawio-viewer-{uuid.uuid4().hex[:8]}"
+                if mxgraph_div:
+                    mxgraph_div["id"] = f"{unique_id}-viewer"
+                    container["id"] = unique_id
+                    mxgraph_div["data-popup"] = "true"
+                    mxgraph_div["style"] = mxgraph_div.get("style", "") + ";display:none;height:0;overflow:hidden;"
+                    container.append(mxgraph)
+
+                caption_link = self.build_caption(diagram, page_names, viewer_href, editor_href, view_mode, unique_id)
+                if caption_link:
+                    container.append(caption_link)
+                    LOGGER.info(f"🧙 Inserted popup trigger for diagram with id: {unique_id}")
+                else:
+                    LOGGER.warning("⚠️ Caption link was not built for caption-only diagram")
+            else:
+                if mxgraph:
+                    container.append(mxgraph)
+                caption_wrapper = self.build_caption(diagram, page_names, viewer_href, editor_href, view_mode)
+                if caption_wrapper:
+                    container.append(caption_wrapper)
+
+            wrapper = diagram
+            while wrapper and wrapper.name not in ("body", "[document]"):
+                if "glightbox" in wrapper.get("class", []):
+                    break
+                wrapper = wrapper.parent
+            if not wrapper or wrapper.name in ("body", "[document]"):
+                wrapper = diagram
+
+            wrapper.replace_with(container)
+
+        return str(soup)
+
+    def build_caption(self, diagram: Tag, page_names: list[str], viewer_href: str | None, editor_href: str | None, view_mode: str = "", unique_id: str = "") -> Tag | None:
+        caption_text = diagram.attrs.get("data-caption")
+        include_src = diagram.attrs.get("data-caption-src", self.config.include_src)
+        include_page = diagram.attrs.get("data-caption-page", self.config.include_page)
+        include_prefix = diagram.attrs.get("data-caption-prefix", self.config.caption_prefix)
+        caption_prefix = "" if not include_prefix else diagram.attrs.get("data-caption-prefix", self.config.caption_prefix)
+        caption_page_separator = diagram.attrs.get("data-caption-page-separator", self.config.caption_page_separator)
+
+        full_caption = None
+        if caption_text:
+            full_caption = f"{caption_prefix}{caption_text}" if caption_prefix else caption_text
+        else:
+            parts = []
+            if include_src:
+                src_clean = unquote(diagram["src"])
+                src_label = include_src if isinstance(include_src, str) else Path(src_clean).stem
+                parts.append(src_label)
+            if include_page:
+                page_label = include_page if isinstance(include_page, str) else ", ".join(page_names)
+                if page_label:
+                    parts.append(page_label)
+            if parts:
+                full_caption = f"{caption_prefix}{caption_page_separator.join(parts)}"
+
+        if full_caption:
+            caption_html = markdown(full_caption)
+            caption_soup = BeautifulSoup(caption_html, "lxml")
+            para = caption_soup.find("p")
+            if para:
+                if view_mode == "viewer-on-click" and unique_id:
+                    link = caption_soup.new_tag("a", href="javascript:void(0)", **{
+                        "class": "drawio-caption-link",
+                        "data-popup-id": f"{unique_id}-viewer",
+                        "onclick": f"handleCaptionClick('{unique_id}')"
+                    })
+                    link.extend(para.contents)
+                    return link
+                else:
+                    # ✅ Add edit icon to regular caption if editor_href is available
+                    if editor_href:
+                        icon_html = f'''<a class="md-icon drawio-caption-icon" href="{editor_href}" title="Edit this diagram" target="_blank" style="margin-left: 0.5em;"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg></a>'''
+                        para.append(BeautifulSoup(icon_html, "lxml").a)
+
+                    wrapper = caption_soup.new_tag("div", **{"class": "md-caption drawio-caption"})
+                    wrapper.append(para)
+                    return wrapper
+
+        return None

@@ -1,106 +1,195 @@
-/* Drawio Viewer uses color-scheme attribute to switch between light and dark mode
-   Let it synchronize with the Material for MkDocs theme color scheme */
-:root {
-  color-scheme: light;
-}
+/* ==============================
+   Drawio Viewer Theme Sync
+   ============================== */
+   :root {
+    color-scheme: light;
+  }
+  [data-md-color-scheme="slate"],
+  [data-bs-theme="dark"] {
+    color-scheme: dark;
+  }
+  
+  /* ==============================
+     Fonts (used in embedded viewer)
+     ============================== */
+  @font-face {
+    font-family: "Roboto";
+    src: url("/fonts/Roboto-Regular.ttf") format("truetype");
+  }
+  @font-face {
+    font-family: "Roboto Medium";
+    src: url("/fonts/Roboto-Medium.ttf") format("truetype");
+  }
+  @font-face {
+    font-family: "Roboto Condensed";
+    src: url("/fonts/RobotoCondensed-Regular.ttf") format("truetype");
+  }
+  @font-face {
+    font-family: "Roboto Mono";
+    src: url("/fonts/RobotoMono-Regular.ttf") format("truetype");
+  }
+  
+  /* ==============================
+     Main Viewer Layout
+     ============================== */
+  .mxgraph {
+    width: 100% !important;
+    max-width: 100% !important;
+    display: flex;
+    justify-content: center;
+    overflow-x: auto;
+    box-sizing: border-box;
+  }
+  
+  /* ==============================
+     Caption Styling
+     ============================== */
+  .drawio-caption {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    font-size: 0.95em;
+    color: var(--md-default-fg-color--lighter);
+    gap: 0.3em;
+    margin-top: 0.25em;
+    margin-bottom: 0;
+    line-height: 1.3;
+  }
+  .drawio-caption p {
+    margin: 0;
+  }
+  .drawio-caption-icon {
+    display: inline-block;
+    vertical-align: super;
+    margin-left: 0.25em;
+    width: 0.9em;
+    height: 0.9em;
+    fill: currentColor;
+    opacity: 0.5;
+    transition: opacity 0.2s ease-in-out, transform 0.2s;
+  }
+  .drawio-caption-icon:hover {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  
+  /* ==============================
+     Caption-Only Inline Link
+     ============================== */
+  .drawio-caption-only {
+    font-weight: 500;
+    padding: 0.5em 0;
+  }
+  .drawio-caption-link {
+    cursor: pointer;
+    color: var(--md-typeset-a-color);
+    text-decoration: underline dotted;
+  }
+  .drawio-caption-link:hover {
+    text-decoration: underline solid;
+  }
+  .drawio-inline-container {
+    display: inline;
+    vertical-align: baseline;
+  }
+  
+  /* ==============================
+     Floating Edit Button
+     ============================== */
+  .drawio-container {
+    position: relative;
+  }
+  .drawio-floating-edit,
+  .drawio-floating-edit:visited {
+    position: absolute;
+    top: 4em;
+    left: 1em; /* ✅ this moves it to the left side */
+    right: auto; /* ⛔ disable right alignment */
+    z-index: 9999;
+  
+    background: white;
+    padding: 0.2em;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+    text-decoration: none;
+  
+    display: none; /* or flex on hover */
+    align-items: center;
+    justify-content: center;
+    width: 2.4em;
+    height: 2.4em;
+    color: #1e88e5;
+  }
+  
+  .drawio-floating-edit:hover {
+    color: var(--md-accent-fg-color);
+  }
+  .drawio-floating-edit svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+  }
 
-/* Material for MkDocs Theme */
-[data-md-color-scheme="slate"] {
-  color-scheme: dark;
-}
+  .drawio-popup:hover .drawio-floating-edit,
+  .drawio-container:hover .drawio-floating-edit {
+    display: flex;
+  }
 
-/* Mkdocs Theme */
-[data-bs-theme="dark"] {
-  color-scheme: dark;
-}
+  .drawio-container:hover .drawio-floating-edit {
+    top: 0.5em;
+    left: 0em;
+  }
 
-@font-face {
-  font-family: "Roboto";
-  src: url("/fonts/Roboto-Regular.ttf") format("truetype");
-}
+  
+  /* ==============================
+     Popup Viewer Styles
+     ============================== */
+  .drawio-floating-overlay,
+  .drawio-floating-viewer {
+    position: fixed;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    padding: 1rem;
+    overflow: auto;
+    z-index: 1050;
+  }
+  
+  .drawio-floating-overlay {
+    inset: 5% 5%;
+    max-height: 90vh;
+  }
+  
+  .drawio-popup-close {
+    font-size: 2em;
+    background: none;
+    border: none;
+    color: #444;
+    position: absolute;
+    top: 0.5em;
+    right: 0.75em;
+    cursor: pointer;
+  }
+  .drawio-popup-close:hover {
+    color: #000;
+  }
+  
+  /* Toggle class for visibility */
+  .drawio-overlay-visible {
+    display: block !important;
+  }
+  
+  .drawio-inline-container .mxgraph {
+    display: inline-block !important;
+    width: auto !important;
+    max-width: none !important;
+    vertical-align: middle;
+    overflow: hidden;
+  }
 
-@font-face {
-  font-family: "Roboto Medium";
-  src: url("/fonts/Roboto-Medium.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "Roboto Condensed";
-  src: url("/fonts/RobotoCondensed-Regular.ttf") format("truetype");
-}
-
-@font-face {
-  font-family: "Roboto Mono";
-  src: url("/fonts/RobotoMono-Regular.ttf") format("truetype");
-}
-
-.mxgraph {
-  width: 100% !important;
-  max-width: 100% !important;
-  display: flex;
-  justify-content: center;
-  overflow-x: auto;
-  box-sizing: border-box;
-}
-
-.drawio-caption {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  font-size: 0.95em;
-  color: var(--md-default-fg-color--lighter);
-  gap: 0.3em;
-
-  margin-top: 0.25em;
-  margin-bottom: 0;
-  line-height: 1.3;
-}
-
-.drawio-caption p {
-  margin: 0;
-}
-
-.drawio-caption-icon {
-  display: inline-block;
-  vertical-align: super;
-  margin-left: 0.25em;
-  width: 0.9em;
-  height: 0.9em;
-  fill: currentColor;
-  opacity: 0.5;
-  transition: opacity 0.2s ease-in-out, transform 0.2s;
-}
-
-.drawio-caption-icon:hover {
-  opacity: 1;
-  transform: scale(1.05);
-}
-
-.drawio-container {
-  position: relative;
-}
-
-.drawio-floating-edit,
-.drawio-floating-edit:visited {
-  position: absolute;
-  top: 4px;
-  left: 6px;
-  z-index: 1000;
-  display: none;
-  color: #666666;
-}
-
-.drawio-floating-edit:hover {
-  color: var(--md-accent-fg-color); /* or a highlight like --md-primary-fg-color */
-}
-
-.drawio-floating-edit svg {
-  width: 18px;
-  height: 18px;
-  fill: currentColor;
-}
-
-.drawio-container:hover .drawio-floating-edit {
-  display: block;
-}
-
+  .drawio-inline-container {
+    display: inline-block;
+    position: relative;
+    vertical-align: middle;
+  }
+  
