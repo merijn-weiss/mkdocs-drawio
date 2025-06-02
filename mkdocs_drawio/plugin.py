@@ -493,7 +493,6 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             LOGGER.warning(f"⚠️ Failed to build editor URL for diagram '{src}' — {e}")
             return None, None
 
-
     def _process_drawio_page(self, output_content, config, page):
         import uuid
 
@@ -588,12 +587,20 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
 
         return str(soup)
 
+
+
     def build_caption(self, diagram: Tag, page_names: list[str], viewer_href: str | None, editor_href: str | None, view_mode: str = "", unique_id: str = "") -> Tag | None:
+        def get_caption_attr(diagram: Tag, attr_name: str, default: str | bool = "") -> str | bool | None:
+                """Sanitize caption-related attribute. Returns None if value is "None" or "false" (case-insensitive)."""
+                raw = diagram.attrs.get(attr_name)
+                if isinstance(raw, str) and raw.strip().lower() in ["none", "false"]:
+                    return None
+                return raw if raw is not None else default
+        
         caption_text = diagram.attrs.get("data-caption")
-        include_src = diagram.attrs.get("data-caption-src", self.config.include_src)
-        include_page = diagram.attrs.get("data-caption-page", self.config.include_page)
-        include_prefix = diagram.attrs.get("data-caption-prefix", self.config.caption_prefix)
-        caption_prefix = "" if not include_prefix else diagram.attrs.get("data-caption-prefix", self.config.caption_prefix)
+        include_src = get_caption_attr(diagram, "data-caption-src", self.config.include_src)
+        include_page = get_caption_attr(diagram, "data-caption-page", self.config.include_page)
+        caption_prefix = get_caption_attr(diagram, "data-caption-prefix", self.config.caption_prefix) or ""
         caption_page_separator = diagram.attrs.get("data-caption-page-separator", self.config.caption_page_separator)
 
         full_caption = None
@@ -626,7 +633,6 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
                     link.extend(para.contents)
                     return link
                 else:
-                    # ✅ Add edit icon to regular caption if editor_href is available
                     if editor_href:
                         icon_html = f'''<a class="md-icon drawio-caption-icon" href="{editor_href}" title="Edit this diagram" target="_blank" style="margin-left: 0.5em;"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg></a>'''
                         para.append(BeautifulSoup(icon_html, "lxml").a)
