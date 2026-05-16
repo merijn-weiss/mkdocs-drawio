@@ -51,9 +51,7 @@ build-backend = "poetry_dynamic_versioning.backend"
 enable = true
 vcs = "git"
 style = "pep440"
-strip-prefix = "v"
 metadata = true
-tag-pattern = '^v?(?P<version>\d+\.\d+\.\d+(?:\+[a-zA-Z0-9.-]+)?)$'
 
 [tool.poetry.plugins."mkdocs.plugins"]
 drawio = 'mkdocs_drawio.plugin:DrawioPlugin'
