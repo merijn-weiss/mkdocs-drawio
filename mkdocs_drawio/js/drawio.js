@@ -6,7 +6,6 @@
     try {
       const config = JSON.parse(first.getAttribute("data-mxgraph") || '{}');
       if (typeof config.edit === "string" && config.edit !== "_blank") {
-        console.log("[drawio.js] ✅ Overriding editBlankUrl to:", config.edit);
         GraphViewer.prototype.editBlankUrl = config.edit;
         GraphViewer.prototype.allowOpener = true;
       }
