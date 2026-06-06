@@ -69,42 +69,74 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
         config.extra_javascript.extend(self.js)
 
     def on_post_build(self, config: base.Config):
+
         base = Path(__file__).parent
+
         css_files = ["css/drawio.css"]
-        js_files = ["js/drawio.js", "js/viewer-static.min.js"]
+
+        js_files = [
+            "js/drawio.js",
+            "js/viewer-static.min.js"
+        ]
 
         site = Path(config["site_dir"])
 
-        # Copy CSS  
+        #
+        # Copy CSS
+        #
+
         for path in css_files:
+
             src = base / path
             dst = site / path
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if src.exists():
-                print(f"✅ Copying CSS: {src} → {dst}")
-                copy_file(src, dst)
-            else:
-                print(f"❌ CSS file not found: {src}")
 
+            dst.parent.mkdir(
+                parents=True,
+                exist_ok=True
+            )
+
+            if src.exists():
+                copy_file(src, dst)
+
+        #
         # Copy JS
+        #
+
         for path in js_files:
+
             src = base / path
             dst = site / path
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if src.exists():
-                print(f"✅ Copying JS: {src} → {dst}")
-                copy_file(src, dst)
-            else:
-                print(f"❌ JS file not found: {src}")
 
+            dst.parent.mkdir(
+                parents=True,
+                exist_ok=True
+            )
+
+            if src.exists():
+                copy_file(src, dst)
+
+        #
         # Copy fonts
+        #
+
         fonts_src = base / "fonts"
         fonts_dst = site / "fonts"
-        fonts_dst.mkdir(parents=True, exist_ok=True)
+
+        fonts_dst.mkdir(
+            parents=True,
+            exist_ok=True
+        )
 
         for font_file in fonts_src.glob("*.ttf"):
-            print(f"📦 Copying font: {font_file.name}")
-            copy_file(font_file, fonts_dst / font_file.name)
+
+            copy_file(
+                font_file,
+                fonts_dst / font_file.name
+            )
+
+        LOGGER.info(
+            "Mondrian Diagrams assets installed"
+        )
 
     def get_diagram_config(self, diagram: Tag, page, src: str = "", page_names=None, diagram_xml=None) -> Dict:
         """Get the configuration for the diagram. Apply either default values in the plugin
