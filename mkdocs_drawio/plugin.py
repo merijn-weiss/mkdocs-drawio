@@ -1,5 +1,6 @@
 """ MkDocs Drawio Plugin """
 
+from logging import config
 import re
 import json
 import string
@@ -276,8 +277,58 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             else:
                 resolved_path = path.joinpath(decoded_src).resolve()
 
+            config["resolved_path"] = str(resolved_path)
+
             diagram_xml = etree.parse(resolved_path)
 
+            parts = resolved_path.parts
+
+            if ".cache" in parts:
+                cache_index = parts.index(".cache")
+
+                repo_slug = parts[cache_index + 1]
+                project_name = parts[cache_index + 2]
+
+                slug_parts = repo_slug.split("__")
+
+                if len(slug_parts) >= 3:
+                    group_path = "/".join(slug_parts[:-1])
+                    repo_name = slug_parts[-1]
+
+                    config["source_edit_url"] = (
+                        f"https://gitlab.com/"
+                        f"{group_path}/"
+                        f"{repo_name}/"
+                        f"{project_name}/"
+                        f"edit/main/docs/index.md"
+                    )
+
+                    # IMPORTANT
+                    inner_docs_index = parts.index("docs", cache_index + 2)
+
+                    config["source_repo_relative"] = Path(
+                        *parts[inner_docs_index:]
+                    ).as_posix()
+
+                    LOGGER.debug(
+                        f"[drawio] included repo: "
+                        f"edit_url={config['source_edit_url']} "
+                        f"repo_relative={config['source_repo_relative']}"
+                    )
+            else:
+                config["source_type"] = "local"
+
+                docs_indices = [i for i, p in enumerate(parts) if p == "docs"]
+
+                if docs_indices:
+                    config["source_repo_relative"] = Path(
+                        *parts[docs_indices[-1]:]
+                    ).as_posix()
+
+                LOGGER.debug(
+                    f"[drawio] local repo_relative="
+                    f"{config.get('source_repo_relative')}"
+                )
         except Exception as e:
             LOGGER.warning(f"❌ Could not parse diagram file '{src}' — {e}")
             return self._styled_error_html(f"Failed to load <b>{src}</b>"), []
@@ -430,7 +481,8 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             if not page_id:
                 return None, None
 
-            viewer_href, editor_href = self.build_editor_url(diagram, diagram["src"], page_id, page)
+            resolved_path = diagram_config.get("resolved_path")
+            viewer_href, editor_href = self.build_editor_url(diagram, resolved_path, page_id, page, diagram_config)
 
             if editor_href:
                 diagram_config["edit"] = f"{editor_href}?client=1"
@@ -442,7 +494,7 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             LOGGER.warning(f"⚠️ Failed to build edit URL — {e}")
         return None, None
 
-    def build_editor_url(self, diagram: Tag, src: str, page_id: str, page=None) -> tuple[str, str] | tuple[None, None]:
+    def build_editor_url(self, diagram: Tag, src: str, page_id: str, page=None, diagram_config=None) -> tuple[str, str] | tuple[None, None]:
         def determine_hash_prefix(edit_url: str) -> str | None:
             try:
                 parsed = urlparse(edit_url)
@@ -476,7 +528,7 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             return None, None
 
         try:
-            edit_url = page.edit_url
+            edit_url = diagram_config.get("source_edit_url", page.edit_url)
             LOGGER.debug(f"[build_editor_url] Using edit_url: {edit_url}")
 
             hash_prefix = determine_hash_prefix(edit_url)
@@ -498,17 +550,31 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             if not repo_prefix or not edit_path:
                 raise ValueError("Missing repo_prefix or edit_path")
 
-            src_clean = Path(src).as_posix().lstrip("/")
-            full_src = f"{repo_prefix}/{edit_path.rsplit('/', 1)[0]}/{src_clean}".lstrip("/")
+            repo_relative = diagram_config.get("source_repo_relative")
 
-            src_path = Path(full_src)
-            parent = src_path.parent.as_posix()
-            filename = quote(unquote(src_path.name), safe="")
-            encoded_src = f"{parent}/{filename}"
+            LOGGER.debug(
+                f"[drawio] build_editor_url:"
+                f" edit_url={edit_url}"
+                f" repo_relative={repo_relative}"
+            )
+
+            if not repo_relative:
+                LOGGER.warning(
+                    f"⚠️ No source_repo_relative available for '{src}'"
+                )
+                return None, None
+
+            encoded_src = quote(repo_relative, safe="/")
+
+            branch = edit_path.split("/")[0]
 
             encoded_json = quote(json.dumps({"pageId": page_id}))
-
-            viewer_url = f"{base_url}#{hash_prefix}{encoded_src}#{encoded_json}"
+            viewer_url = (
+                f"{base_url}"
+                f"#{hash_prefix}"
+                f"{repo_prefix}/{branch}/{encoded_src}"
+                f"#{encoded_json}"
+            )
 
             # Only GitHub and GitLab return editor_url
             editor_url = f"{viewer_url}?client=1" if hash_prefix in ("H", "A") else None
@@ -516,8 +582,8 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
             if editor_url is None:
                 LOGGER.debug("[build_editor_url] Viewer URL available, but no editor link due to unsupported host")
 
-            LOGGER.debug(f"[build_editor_url] viewer_url: {viewer_url}")
-            LOGGER.debug(f"[build_editor_url] editor_url: {editor_url}")
+            LOGGER.debug(f"[drawio] viewer_url={viewer_url}")
+            LOGGER.debug(f"[drawio] editor_url={editor_url}")
 
             return viewer_url, editor_url
 
@@ -531,7 +597,7 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
         if ".drawio" not in output_content.lower():
             return output_content
 
-        path = Path(page.file.abs_dest_path).parent
+        path = Path(page.file.abs_src_path).resolve().parent
         soup = BeautifulSoup(output_content, "lxml")
         diagrams = soup.find_all("img", src=self.RE_DRAWIO_FILE)
 
@@ -566,7 +632,14 @@ class DrawioPlugin(BasePlugin[DrawioConfig]):
                 LOGGER.warning(f"⚠️ Failed to parse XML from config_data: {e}")
                 continue
 
-            viewer_href, editor_href = self.inject_edit_link(diagram_config, diagram, diagram_xml, page_names, page)
+            diagram_config["resolved_path"] = config_data.get("resolved_path")
+            viewer_href, editor_href = self.inject_edit_link(
+                diagram_config,
+                diagram,
+                diagram_xml,
+                page_names,
+                page
+            )
 
             view = diagram.attrs.get("data-view", "").lower()
             view_mode = diagram.attrs.get("data-view-mode", "").lower()
